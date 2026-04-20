@@ -1,0 +1,42 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================
+// PROFILE
+// ============================================
+model Profile {
+  id                  String @id @default(uuid())
+  name                String @unique
+  gender              Gender
+  gender_probability  Float
+  age                 Int
+  age_group           AgeGroup
+  country_id          String
+  country_name        String
+  country_probability Float
+  created_at          DateTime  @default(now())
+  @@index([id])
+  @@index([name])
+}
+enum Gender {
+  male
+  female
+}
+enum AgeGroup {
+  child
+  teenager
+  adult
+  senior
+}
