@@ -3,11 +3,10 @@ import {
   NestInterceptor,
   ExecutionContext,
   CallHandler,
-  HttpException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { Observable, throwError } from 'rxjs';
-import { map, catchError } from 'rxjs/operators';
+import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
 
 export interface Response<T> {
   status: string;
@@ -34,36 +33,40 @@ export class PaginationResponse<T> {
 }
 
 @Injectable()
-export class TransformInterceptor<T>
-  implements NestInterceptor<T, Response<T>>
-{
+export class TransformInterceptor<T> implements NestInterceptor<
+  T,
+  Response<T>
+> {
   constructor(private reflector: Reflector) {}
   intercept(
     context: ExecutionContext,
     next: CallHandler,
-  ): Observable<any> {
+  ): Observable<Response<T>> {
     return next.handle().pipe(
-      map((res) => {
+      map((res: ResponseWithMessage<T> | PaginationResponse<T> | T) => {
         const status = 'success';
         let message: string = '';
-        let data: any;
+        let data: T | T[];
         if (res instanceof ResponseWithMessage) {
-          data = res.data
+          data = res.data;
           message = res.message ?? '';
-        }
-        else if (res instanceof PaginationResponse) {
+        } else if (res instanceof PaginationResponse) {
           return {
             status,
             page: res.page,
             limit: res.limit,
             total: res.total,
-            data: res.data
-          }
-        }
-        else {
+            data: res.data,
+          } as unknown as Response<T>;
+        } else {
           data = res;
         }
-        return { status, ...(message && { message }), ...(Array.isArray(data) && { count: data.length }), data };
+        return {
+          status,
+          ...(message && { message }),
+          ...(Array.isArray(data) && { count: (data as T[]).length }),
+          data,
+        } as Response<T>;
       }),
     );
   }

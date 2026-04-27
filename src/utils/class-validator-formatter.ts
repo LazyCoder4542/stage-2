@@ -1,8 +1,8 @@
-import { BadRequestException, ValidationError } from "@nestjs/common";
+import { BadRequestException, ValidationError } from '@nestjs/common';
 
 interface Error {
-  property: string,
-  errors: any[]
+  property: string;
+  errors: any[];
 }
 
 export function exceptionFormatter(validationErrors: ValidationError[] = []) {
@@ -39,7 +39,8 @@ export function exceptionFormatter(validationErrors: ValidationError[] = []) {
     return errors;
   };
 
-  const errors = getPrettyClassValidatorErrors(validationErrors);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _errors = getPrettyClassValidatorErrors(validationErrors);
 
   // return new BadRequestException({
   //   message: 'validation error',

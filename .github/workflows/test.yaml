@@ -1,0 +1,24 @@
+name: Test Insighta Labs+
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+   test:
+    environment: production
+    runs-on: ubuntu-latest
+    container: 
+      image: node:22
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx prisma generate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TEST_DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
+      - run: npm test
+      - run: npm run build

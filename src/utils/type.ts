@@ -1,4 +1,4 @@
-import { Gender } from "~gen/prisma/enums";
+import { Gender } from '~gen/prisma/enums';
 
 export interface GenderizeResponse {
   count: number;
@@ -14,7 +14,7 @@ export interface AgifyResponse {
 export interface NationalizeResponse {
   count: number;
   name: string;
-  country: NationalizeCountryData[]
+  country: NationalizeCountryData[];
 }
 export interface NationalizeCountryData {
   country_id: string;
@@ -22,9 +22,9 @@ export interface NationalizeCountryData {
 }
 export interface RestCountriesData {
   name: {
-    common: string,
-  }
-  cca2: string
+    common: string;
+  };
+  cca2: string;
 }
 
 export interface ClassifyResponse {

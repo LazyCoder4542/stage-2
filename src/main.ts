@@ -3,7 +3,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { exceptionFormatter } from './utils/class-validator-formatter';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
-import { apiReference } from '@scalar/nestjs-api-reference'
+import { apiReference } from '@scalar/nestjs-api-reference';
 import { TransformInterceptor } from './utils/response.interceptors';
 import { AllExceptionsFilter } from './utils/exception-filter';
 
@@ -30,10 +30,10 @@ async function bootstrap() {
     .setTitle('HNG Stage 2 — Intelligence Query Engine')
     .setDescription(
       'Enriches a name with predicted gender, age, and nationality by querying Genderize.io, Agify.io, and Nationalize.io, ' +
-      'persists the result in PostgreSQL, and exposes a natural-language search interface over the stored profiles.'
+        'persists the result in PostgreSQL, and exposes a natural-language search interface over the stored profiles.',
     )
     .setVersion('2.0')
-    .build()
+    .build();
 
   const document = SwaggerModule.createDocument(app, config);
   app.use(
@@ -41,10 +41,12 @@ async function bootstrap() {
     apiReference({
       content: document,
     }),
-  )
+  );
 
   app.enableCors();
 
   await app.listen(process.env.PORT ?? 3000);
 }
-bootstrap();
+bootstrap().catch((err) => {
+  console.error(err);
+});
