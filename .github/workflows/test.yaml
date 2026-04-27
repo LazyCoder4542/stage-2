@@ -5,12 +5,9 @@ on:
     branches:
       - main
 
-env:
-  DATABASE_URL: ${{ secrets.DATABASE_URL }}
-  TEST_DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
-
 jobs:
    test:
+    environment: production
     runs-on: ubuntu-latest
     container: 
       image: node:22
@@ -21,7 +18,7 @@ jobs:
       - run: npm ci
       - run: npx prisma generate
         env:
-          DATABASE_URL: "postgresql://dummy:dummy@localhost/dummy"
-          TEST_DATABASE_URL: "postgresql://dummy:dummy@localhost/dummy"
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TEST_DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
       - run: npm test
       - run: npm run build
