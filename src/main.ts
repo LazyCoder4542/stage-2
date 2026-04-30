@@ -1,4 +1,4 @@
-import { NestFactory, Reflector } from '@nestjs/core';
+import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { exceptionFormatter } from './utils/class-validator-formatter';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -10,7 +10,7 @@ import { AllExceptionsFilter } from './utils/exception-filter';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  app.useGlobalInterceptors(new TransformInterceptor(new Reflector()));
+  app.useGlobalInterceptors(new TransformInterceptor());
 
   app.useGlobalFilters(new AllExceptionsFilter());
 
@@ -27,12 +27,19 @@ async function bootstrap() {
   });
 
   const config = new DocumentBuilder()
-    .setTitle('HNG Stage 2 — Intelligence Query Engine')
+    .setTitle(
+      'HNG Stage 3 — Insighta Labs+: Secure Access & Multi-Interface Integration',
+    )
     .setDescription(
       'Enriches a name with predicted gender, age, and nationality by querying Genderize.io, Agify.io, and Nationalize.io, ' +
-        'persists the result in PostgreSQL, and exposes a natural-language search interface over the stored profiles.',
+        'persists the result in PostgreSQL, and exposes a natural-language search interface over the stored profiles. ' +
+        'Authentication is via GitHub OAuth. All profile endpoints require the X-API-Version: 1 header.',
     )
     .setVersion('2.0')
+    .addBearerAuth(
+      { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+      'access-token',
+    )
     .build();
 
   const document = SwaggerModule.createDocument(app, config);

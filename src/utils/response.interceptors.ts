@@ -4,7 +4,6 @@ import {
   ExecutionContext,
   CallHandler,
 } from '@nestjs/common';
-import { Reflector } from '@nestjs/core';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 
@@ -12,14 +11,20 @@ export interface Response<T> {
   status: string;
   message?: string;
   count?: number;
-  data: T;
+  data?: T;
 }
 
-export class ResponseWithMessage<T> {
+export class DataWithMessage<T> {
   constructor(
     public readonly data: T,
     public readonly message?: string,
   ) {}
+}
+
+interface PaginationResponseLinks {
+  self: string;
+  next: string | null;
+  prev: string | null;
 }
 
 export class PaginationResponse<T> {
@@ -28,6 +33,8 @@ export class PaginationResponse<T> {
     public readonly page: number,
     public readonly limit: number,
     public readonly total: number,
+    public readonly total_pages: number,
+    public readonly links: PaginationResponseLinks,
     public readonly message?: string,
   ) {}
 }
@@ -37,17 +44,16 @@ export class TransformInterceptor<T> implements NestInterceptor<
   T,
   Response<T>
 > {
-  constructor(private reflector: Reflector) {}
   intercept(
-    context: ExecutionContext,
+    _context: ExecutionContext,
     next: CallHandler,
   ): Observable<Response<T>> {
     return next.handle().pipe(
-      map((res: ResponseWithMessage<T> | PaginationResponse<T> | T) => {
+      map((res: DataWithMessage<T> | PaginationResponse<T> | T) => {
         const status = 'success';
         let message: string = '';
         let data: T | T[];
-        if (res instanceof ResponseWithMessage) {
+        if (res instanceof DataWithMessage) {
           data = res.data;
           message = res.message ?? '';
         } else if (res instanceof PaginationResponse) {
@@ -56,8 +62,16 @@ export class TransformInterceptor<T> implements NestInterceptor<
             page: res.page,
             limit: res.limit,
             total: res.total,
+            total_pages: res.total_pages,
+            links: res.links,
             data: res.data,
+            ...(res.message && { message: res.message }),
           } as unknown as Response<T>;
+        } else if (typeof res === 'object' && res !== null) {
+          return {
+            status,
+            ...res,
+          } as Response<T>;
         } else {
           data = res;
         }

@@ -40,3 +40,23 @@ enum AgeGroup {
   adult
   senior
 }
+
+// ============================================
+// USER
+// ============================================
+model User {
+  id                  String @id @default(uuid(7))
+  github_id           String @unique
+  username            String
+  email               String
+  avatar_url          String?
+  role                UserRole  @default(analyst)
+  is_active           Boolean   @default(true)
+  refresh_token_hash  String?       
+  last_login_at       DateTime  @default(now())
+  created_at          DateTime  @default(now())
+}
+enum UserRole {
+  admin
+  analyst
+}
