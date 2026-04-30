@@ -20,15 +20,15 @@ export class PkceGuard implements CanActivate {
     >;
 
     if (is_cli !== 'true') return true;
-    console.log({code, code_verifier, code_challenge})
+    console.log({ code, code_verifier, code_challenge });
     if (!code || !code_verifier || !code_challenge) {
       throw new UnauthorizedException('Invalid or expired GitHub code');
     }
 
     const expected = createHash('sha256')
-    .update(code_verifier)
-    .digest('base64url');
-    
+      .update(code_verifier)
+      .digest('base64url');
+
     if (expected !== code_challenge) {
       throw new UnauthorizedException('Invalid or expired GitHub code');
     }

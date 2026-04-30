@@ -80,7 +80,10 @@ export class AuthService {
     await this.userService.updateRefreshTokenHash(userId, null);
   }
 
-  async exchangeGithubCode(code: string, code_verifier: string): Promise<TokenPayload> {
+  async exchangeGithubCode(
+    code: string,
+    code_verifier: string,
+  ): Promise<TokenPayload> {
     const tokenRes = await fetch(
       'https://github.com/login/oauth/access_token',
       {
