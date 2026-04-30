@@ -36,8 +36,13 @@ import { LoggerModule } from 'nestjs-pino';
               }
             : undefined,
         serializers: {
-          req: (req) => ({ method: req.method, url: req.url }),
-          res: (res) => ({ statusCode: res.statusCode }),
+          req: (req: { method: string; url: string }) => ({
+            method: req.method,
+            url: req.url,
+          }),
+          res: (res: { statusCode: number }) => ({
+            statusCode: res.statusCode,
+          }),
         },
       },
     }),
