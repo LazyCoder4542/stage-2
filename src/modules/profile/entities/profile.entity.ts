@@ -17,12 +17,6 @@ export class ProfileEntity {
   })
   gender_probability!: number;
 
-  @ApiProperty({
-    example: 10195,
-    description: 'Number of records used for the gender prediction',
-  })
-  sample_size!: number;
-
   @ApiProperty({ example: 28, description: 'Predicted age' })
   age!: number;
 

@@ -19,7 +19,7 @@ import { AgeGroup, Gender, Prisma, Profile } from '~gen/prisma/client';
 import { PrismaService } from 'src/shared/prisma.service';
 import {
   PaginationResponse,
-  ResponseWithMessage,
+  DataWithMessage,
 } from 'src/utils/response.interceptors';
 import {
   GetProfileDto,
@@ -45,7 +45,7 @@ export class ProfileService {
     const { name } = createProfileDto;
     const existing = await this.profile({ name });
     if (existing) {
-      return new ResponseWithMessage(existing, 'Profile already exists');
+      return new DataWithMessage(existing, 'Profile already exists');
     }
     const enrichData = await Promise.all([
       this.genderize(name),
@@ -76,7 +76,7 @@ export class ProfileService {
     });
   }
 
-  async findAll(getProfileDto: GetProfileDto) {
+  async findAll(getProfileDto: GetProfileDto, baseUrl: string) {
     let order: Prisma.SortOrder | undefined = undefined;
     if (getProfileDto.order == ProfileOrderBy.asc) order = 'asc';
     else if (getProfileDto.order == ProfileOrderBy.desc) order = 'desc';
@@ -114,7 +114,47 @@ export class ProfileService {
       }),
       this.prisma.profile.count({ where }),
     ]);
-    return new PaginationResponse(data, page, limit, total);
+    const total_pages = Math.ceil(total / limit);
+    const url = new URL(baseUrl, process.env.API_BASE_URL);
+    const buildUrl = (p: number) => {
+      url.searchParams.set('page', String(p));
+      return `${url.pathname}${url.search}`;
+    };
+    const links = {
+      self: buildUrl(page),
+      next: page < total_pages ? buildUrl(page + 1) : null,
+      prev: page > 1 ? buildUrl(page - 1) : null,
+    };
+    return new PaginationResponse(data, page, limit, total, total_pages, links);
+  }
+
+  async findAllForExport(getProfileDto: GetProfileDto): Promise<Profile[]> {
+    let order: Prisma.SortOrder | undefined = undefined;
+    if (getProfileDto.order == ProfileOrderBy.asc) order = 'asc';
+    else if (getProfileDto.order == ProfileOrderBy.desc) order = 'desc';
+    const where: Prisma.ProfileWhereInput = {
+      gender: getProfileDto.gender,
+      age_group: getProfileDto.age_group,
+      country_id: getProfileDto.country_id,
+      age: {
+        gte: getProfileDto.min_age,
+        lte: getProfileDto.max_age,
+      },
+      gender_probability: { gte: getProfileDto.min_gender_probability },
+      country_probability: { gte: getProfileDto.min_country_probability },
+    };
+    return this.prisma.profile.findMany({
+      where,
+      orderBy: {
+        ...(getProfileDto.sort_by == ProfileSortBy.age && { age: order }),
+        ...(getProfileDto.sort_by == ProfileSortBy.created_at && {
+          created_at: order,
+        }),
+        ...(getProfileDto.sort_by == ProfileSortBy.gender_probability && {
+          gender_probability: order,
+        }),
+      },
+    });
   }
 
   async findOne(id: string) {
@@ -123,7 +163,7 @@ export class ProfileService {
     return profile;
   }
 
-  async search(searchProfileDto: SearchProfileDto) {
+  async search(searchProfileDto: SearchProfileDto, baseUrl: string) {
     const result = this.parseQuery(searchProfileDto.q);
     const bool = Object.values(result).every((v) => !v);
     if (bool) {
@@ -145,7 +185,7 @@ export class ProfileService {
       page: searchProfileDto.page,
       limit: searchProfileDto.limit,
     };
-    return this.findAll(getProfileDto);
+    return this.findAll(getProfileDto, baseUrl);
   }
 
   update(id: number, updateProfileDto: UpdateProfileDto) {
