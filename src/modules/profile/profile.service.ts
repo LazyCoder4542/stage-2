@@ -2,9 +2,12 @@ import {
   BadGatewayException,
   BadRequestException,
   HttpException,
+  Inject,
   Injectable,
   InternalServerErrorException,
 } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
 import { CreateProfileDto } from './dto/create-profile.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { HttpService } from '@nestjs/axios';
@@ -27,6 +30,7 @@ import {
 } from './dto/get-profile.dto';
 import { SearchProfileDto } from './dto/search-profile.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { ConfigService } from '@nestjs/config';
 
 // REGEX
 // find country name: (?<=from )\w+
@@ -37,10 +41,16 @@ import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
 export class ProfileService {
+  private readonly cacheTtl: number;
+
   constructor(
     private readonly httpService: HttpService,
     private readonly prisma: PrismaService,
-  ) {}
+    @Inject(CACHE_MANAGER) private readonly cache: Cache,
+    private readonly config: ConfigService,
+  ) {
+    this.cacheTtl = this.config.getOrThrow<number>('REDIS_TTL') * 1000;
+  }
   async create(createProfileDto: CreateProfileDto) {
     const { name } = createProfileDto;
     const existing = await this.profile({ name });
@@ -65,7 +75,7 @@ export class ProfileService {
       enrichData[2].country[0];
     const rounded_country_probability = Math.round(country_probability * 100) / 100;
     const country_name = await this.getCountryName(country_id);
-    return this.createProfile({
+    const profile = await this.createProfile({
       name,
       gender: gender!,
       gender_probability,
@@ -75,9 +85,15 @@ export class ProfileService {
       country_name,
       country_probability: rounded_country_probability,
     });
+    await this.cache.clear();
+    return profile;
   }
 
   async findAll(getProfileDto: GetProfileDto, baseUrl: string) {
+    const cacheKey = `profile:list:${JSON.stringify(getProfileDto)}`;
+    const cached = await this.cache.get(cacheKey);
+    if (cached) return cached;
+
     let order: Prisma.SortOrder | undefined = undefined;
     if (getProfileDto.order == ProfileOrderBy.asc) order = 'asc';
     else if (getProfileDto.order == ProfileOrderBy.desc) order = 'desc';
@@ -126,7 +142,9 @@ export class ProfileService {
       next: page < total_pages ? buildUrl(page + 1) : null,
       prev: page > 1 ? buildUrl(page - 1) : null,
     };
-    return new PaginationResponse(data, page, limit, total, total_pages, links);
+    const result = new PaginationResponse(data, page, limit, total, total_pages, links);
+    await this.cache.set(cacheKey, result, this.cacheTtl);
+    return result;
   }
 
   async findAllForExport(getProfileDto: GetProfileDto): Promise<Profile[]> {
@@ -204,6 +222,7 @@ export class ProfileService {
       }
       throw e;
     });
+    await this.cache.clear();
   }
   private getAgeGroup(age: number) {
     if (age <= 12) {
