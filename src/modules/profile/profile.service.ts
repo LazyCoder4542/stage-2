@@ -2,21 +2,26 @@ import {
   BadGatewayException,
   BadRequestException,
   HttpException,
+  Inject,
   Injectable,
   InternalServerErrorException,
+  Logger,
+  OnModuleInit,
 } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
 import { CreateProfileDto } from './dto/create-profile.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { HttpService } from '@nestjs/axios';
 import { catchError, firstValueFrom } from 'rxjs';
 import {
   AgifyResponse,
+  DemonymCountryData,
   GenderizeResponse,
   NationalizeResponse,
   RestCountriesData,
 } from 'src/utils/type';
 import { AgeGroup, Gender, Prisma, Profile } from '~gen/prisma/client';
-import { PrismaService } from 'src/shared/prisma.service';
 import {
   PaginationResponse,
   DataWithMessage,
@@ -27,6 +32,18 @@ import {
   ProfileSortBy,
 } from './dto/get-profile.dto';
 import { SearchProfileDto } from './dto/search-profile.dto';
+import { PrismaService } from 'src/prisma/prisma.service';
+import { ConfigService } from '@nestjs/config';
+import { parse as csvParse } from 'csv-parse';
+import Busboy from 'busboy';
+import type { IncomingMessage } from 'http';
+
+export interface CsvUploadSummary {
+  total_rows: number;
+  inserted: number;
+  skipped: number;
+  reasons: Record<string, number>;
+}
 
 // REGEX
 // find country name: (?<=from )\w+
@@ -36,11 +53,46 @@ import { SearchProfileDto } from './dto/search-profile.dto';
 // find gender: (male|female)
 
 @Injectable()
-export class ProfileService {
+export class ProfileService implements OnModuleInit {
+  private readonly logger = new Logger(ProfileService.name);
+  private readonly demonymMap = new Map<string, string>();
+  private readonly cacheTtl: number;
+
   constructor(
     private readonly httpService: HttpService,
     private readonly prisma: PrismaService,
-  ) {}
+    @Inject(CACHE_MANAGER) private readonly cache: Cache,
+    private readonly config: ConfigService,
+  ) {
+    this.cacheTtl = this.config.getOrThrow<number>('REDIS_TTL') * 1000;
+  }
+
+  async onModuleInit() {
+    try {
+      const { data } = await firstValueFrom(
+        this.httpService
+          .get<
+            DemonymCountryData[]
+          >('https://restcountries.com/v3.1/all?fields=cca2,demonyms')
+          .pipe(
+            catchError(() => {
+              throw new Error();
+            }),
+          ),
+      );
+      for (const country of data) {
+        const { f, m } = country.demonyms?.eng ?? {};
+        if (f) this.demonymMap.set(f.toLowerCase(), country.cca2);
+        if (m) this.demonymMap.set(m.toLowerCase(), country.cca2);
+      }
+      this.logger.log(`Demonym map built (${this.demonymMap.size} entries)`);
+    } catch {
+      this.logger.warn(
+        'Failed to build demonym map — demonym search unavailable',
+      );
+    }
+  }
+
   async create(createProfileDto: CreateProfileDto) {
     const { name } = createProfileDto;
     const existing = await this.profile({ name });
@@ -63,8 +115,10 @@ export class ProfileService {
     const { age } = enrichData[1];
     const { country_id, probability: country_probability } =
       enrichData[2].country[0];
+    const rounded_country_probability =
+      Math.round(country_probability * 100) / 100;
     const country_name = await this.getCountryName(country_id);
-    return this.createProfile({
+    const profile = await this.createProfile({
       name,
       gender: gender!,
       gender_probability,
@@ -72,11 +126,17 @@ export class ProfileService {
       age_group: this.getAgeGroup(age),
       country_id,
       country_name,
-      country_probability,
+      country_probability: rounded_country_probability,
     });
+    await this.cache.clear();
+    return profile;
   }
 
   async findAll(getProfileDto: GetProfileDto, baseUrl: string) {
+    const cacheKey = `profile:list:${JSON.stringify(getProfileDto)}`;
+    const cached = await this.cache.get(cacheKey);
+    if (cached) return cached;
+
     let order: Prisma.SortOrder | undefined = undefined;
     if (getProfileDto.order == ProfileOrderBy.asc) order = 'asc';
     else if (getProfileDto.order == ProfileOrderBy.desc) order = 'desc';
@@ -98,7 +158,7 @@ export class ProfileService {
       },
     };
     const [data, total] = await Promise.all([
-      this.prisma.profile.findMany({
+      this.prisma.client.profile.findMany({
         where,
         orderBy: {
           ...(getProfileDto.sort_by == ProfileSortBy.age && { age: order }),
@@ -112,7 +172,7 @@ export class ProfileService {
         skip: (page - 1) * limit,
         take: limit,
       }),
-      this.prisma.profile.count({ where }),
+      this.prisma.client.profile.count({ where }),
     ]);
     const total_pages = Math.ceil(total / limit);
     const url = new URL(baseUrl, process.env.API_BASE_URL);
@@ -125,7 +185,16 @@ export class ProfileService {
       next: page < total_pages ? buildUrl(page + 1) : null,
       prev: page > 1 ? buildUrl(page - 1) : null,
     };
-    return new PaginationResponse(data, page, limit, total, total_pages, links);
+    const result = new PaginationResponse(
+      data,
+      page,
+      limit,
+      total,
+      total_pages,
+      links,
+    );
+    await this.cache.set(cacheKey, result, this.cacheTtl);
+    return result;
   }
 
   async findAllForExport(getProfileDto: GetProfileDto): Promise<Profile[]> {
@@ -143,7 +212,7 @@ export class ProfileService {
       gender_probability: { gte: getProfileDto.min_gender_probability },
       country_probability: { gte: getProfileDto.min_country_probability },
     };
-    return this.prisma.profile.findMany({
+    return this.prisma.client.profile.findMany({
       where,
       orderBy: {
         ...(getProfileDto.sort_by == ProfileSortBy.age && { age: order }),
@@ -172,9 +241,9 @@ export class ProfileService {
     const { country, ageGroup, minAge, maxAge, gender, isYoung } = result;
     let country_id: string | undefined = undefined;
     if (country) {
-      country_id = await this.getCountryId(country).catch(() => {
+      country_id = await this.resolveCountryId(country);
+      if (!country_id)
         throw new BadRequestException('Unable to interpret query');
-      });
     }
     const getProfileDto: GetProfileDto = {
       country_id: country_id,
@@ -203,7 +272,159 @@ export class ProfileService {
       }
       throw e;
     });
+    await this.cache.clear();
   }
+
+  async uploadCsv(req: IncomingMessage): Promise<CsvUploadSummary> {
+    const CHUNK_SIZE = 1000;
+    const EXPECTED_COLS = 7;
+
+    return new Promise((resolve, reject) => {
+      const bb = Busboy({ headers: req.headers as Record<string, string> });
+
+      const summary: CsvUploadSummary = {
+        total_rows: 0,
+        inserted: 0,
+        skipped: 0,
+        reasons: {},
+      };
+
+      const bump = (reason: string) => {
+        summary.skipped++;
+        summary.reasons[reason] = (summary.reasons[reason] ?? 0) + 1;
+      };
+
+      let fileFound = false;
+
+      bb.on('file', (_field, stream) => {
+        fileFound = true;
+
+        const parser = csvParse({
+          delimiter: ',',
+          trim: true,
+          skip_empty_lines: true,
+          relax_column_count: true,
+          relax_quotes: true,
+          from_line: 2,
+        });
+
+        const chunk: Prisma.ProfileCreateManyInput[] = [];
+        let chain = Promise.resolve();
+
+        const flushChunk = (rows: Prisma.ProfileCreateManyInput[]) => {
+          if (!rows.length) return;
+          parser.pause();
+          chain = chain.then(async () => {
+            try {
+              const { count } = await this.prisma.client.profile.createMany({
+                data: rows,
+                skipDuplicates: true,
+              });
+              summary.inserted += count;
+              const dupes = rows.length - count;
+              summary.skipped += dupes;
+              summary.reasons['duplicate_name'] =
+                (summary.reasons['duplicate_name'] ?? 0) + dupes;
+            } catch {
+              summary.skipped += rows.length;
+              summary.reasons['db_error'] =
+                (summary.reasons['db_error'] ?? 0) + rows.length;
+            }
+            await new Promise((r) => setImmediate(r));
+            parser.resume();
+          });
+        };
+
+        parser.on('data', (row: string[]) => {
+          summary.total_rows++;
+
+          if (row.length !== EXPECTED_COLS) {
+            bump('malformed_row');
+            return;
+          }
+
+          const [
+            rawName,
+            rawGender,
+            gpStr,
+            ageStr,
+            countryId,
+            countryName,
+            cpStr,
+          ] = row;
+
+          if (
+            !rawName ||
+            !rawGender ||
+            !gpStr ||
+            !ageStr ||
+            !countryId ||
+            !countryName ||
+            !cpStr
+          ) {
+            bump('missing_fields');
+            return;
+          }
+
+          const gender = rawGender.toLowerCase();
+          if (gender !== 'male' && gender !== 'female') {
+            bump('invalid_gender');
+            return;
+          }
+
+          const age = Number(ageStr);
+          if (!Number.isInteger(age) || age <= 0) {
+            bump('invalid_age');
+            return;
+          }
+
+          const gender_probability = parseFloat(gpStr);
+          const country_probability = parseFloat(cpStr);
+          if (
+            isNaN(gender_probability) ||
+            gender_probability < 0 ||
+            gender_probability > 1 ||
+            isNaN(country_probability) ||
+            country_probability < 0 ||
+            country_probability > 1
+          ) {
+            bump('missing_fields');
+            return;
+          }
+
+          chunk.push({
+            name: rawName.replace(/\b\w/g, (c) => c.toUpperCase()),
+            gender: gender as Gender,
+            gender_probability,
+            age,
+            age_group: this.getAgeGroup(age),
+            country_id: countryId.toUpperCase(),
+            country_name: countryName,
+            country_probability: Math.round(country_probability * 100) / 100,
+          });
+
+          if (chunk.length >= CHUNK_SIZE) flushChunk(chunk.splice(0));
+        });
+
+        parser.on('end', () => {
+          flushChunk(chunk.splice(0));
+          chain.then(() => resolve(summary)).catch(reject);
+        });
+
+        parser.on('error', () => bump('malformed_row'));
+
+        stream.pipe(parser);
+      });
+
+      bb.on('finish', () => {
+        if (!fileFound) reject(new BadRequestException('No file uploaded'));
+      });
+
+      bb.on('error', reject);
+      req.pipe(bb);
+    });
+  }
+
   private getAgeGroup(age: number) {
     if (age <= 12) {
       return AgeGroup.child;
@@ -292,6 +513,54 @@ export class ProfileService {
 
     return data[0].name.common;
   }
+  private async resolveCountryId(country: string): Promise<string | undefined> {
+    const words = country.trim().split(/\s+/);
+
+    // step 0: demonym map (e.g. "Nigerian" → "NG")
+    for (const word of words) {
+      const id = this.demonymMap.get(word.toLowerCase());
+      if (id) return id;
+    }
+
+    // step 1: alpha code (e.g. "US", "GBR")
+    try {
+      return await this.getCountryIdByCode(words[0]);
+    } catch {
+      // not a valid code, continue
+    }
+
+    for (let i = 1; i <= words.length; i++) {
+      try {
+        return await this.getCountryId(words.slice(0, i).join(' '));
+      } catch {
+        // try next
+      }
+    }
+
+    try {
+      return await this.getCountryIdFuzzy(country);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async getCountryIdByCode(code: string): Promise<string> {
+    const { data } = await firstValueFrom(
+      this.httpService
+        .get<
+          RestCountriesData[]
+        >(`https://restcountries.com/v3.1/alpha/${encodeURIComponent(code)}`)
+        .pipe(
+          catchError((error) => {
+            console.log(error);
+            throw this.externalApiError('RestCountries');
+          }),
+        ),
+    );
+    if (!data.length) throw new BadRequestException('No match for code');
+    return data[0].cca2;
+  }
+
   private async getCountryId(name: string): Promise<string> {
     const { data } = await firstValueFrom(
       this.httpService
@@ -310,20 +579,89 @@ export class ProfileService {
         'No prediction available for the provided name',
       );
     }
+    return data[0].cca2;
+  }
 
+  private async getCountryIdFuzzy(name: string): Promise<string> {
+    const { data } = await firstValueFrom(
+      this.httpService
+        .get<
+          RestCountriesData[]
+        >(`https://restcountries.com/v3.1/name/${encodeURIComponent(name)}`)
+        .pipe(
+          catchError((error) => {
+            console.log(error);
+            throw this.externalApiError('RestCountries');
+          }),
+        ),
+    );
+    if (data.length === 0) {
+      throw new BadRequestException(
+        'No prediction available for the provided name',
+      );
+    }
     return data[0].cca2;
   }
   private parseQuery(input: string) {
-    const country = input.match(/(?<=from |in )\w+/)?.[0] ?? undefined;
-    const ageGroup =
-      input.match(/(child|teenager|adult|senior)/)?.[0] ?? undefined;
-    const minAge = input.match(/(?<=above )\d+/)?.[0] ?? undefined;
-    const maxAge = input.match(/(?<=below )\d+/)?.[0] ?? undefined;
-    const gender = input.match(/(male|female)/)?.[0] ?? undefined;
-    const isYoung = Boolean(input.match(/young/));
+    const s = input.trim().replace(/[‐-―−﹘﹣－]/g, '-');
 
-    const result = { country, ageGroup, minAge, maxAge, gender, isYoung };
-    return result;
+    // female-family words first to prevent partial match on "male" inside "female"
+    const genderRaw = s
+      .match(/\b(females?|wom(?:an|en)|males?|men|man)\b/i)?.[1]
+      ?.toLowerCase();
+    const gender = genderRaw
+      ? /^(?:female|woman|women)/.test(genderRaw)
+        ? 'female'
+        : 'male'
+      : undefined;
+
+    // age group keywords → enum values
+    let ageGroup: string | undefined;
+    if (/\bteen(?:age(?:r)?)?s?\b/i.test(s)) ageGroup = 'teenager';
+    else if (/\b(?:kids?|child(?:ren)?)\b/i.test(s)) ageGroup = 'child';
+    else if (/\b(?:elderly|old|seniors?)\b/i.test(s)) ageGroup = 'senior';
+    else if (/\badults?\b/i.test(s)) ageGroup = 'adult';
+
+    const isYoung = /\byoung\b/i.test(s);
+
+    // "between X and Y" or "X-Y" range
+    const rangeMatch =
+      s.match(/\bbetween\s+(?:ages?\s+(?:of\s+)?)?(\d+)\s+and\s+(\d+)\b/i) ??
+      s.match(/\b(\d+)\s*-\s*(\d+)\b/);
+
+    let minAge: string | undefined;
+    let maxAge: string | undefined;
+
+    if (rangeMatch) {
+      minAge = rangeMatch[1];
+      maxAge = rangeMatch[2];
+    } else {
+      minAge = s.match(/\b(?:above|over|older\s+than)\s+(\d+)\b/i)?.[1];
+      maxAge = s.match(/\b(?:below|under|younger\s+than)\s+(\d+)\b/i)?.[1];
+    }
+
+    // multi-word country after "from" or "in" — exclude "in their/the/my/a/an/his/her"
+    const countryRaw = s.match(
+      /\b(?:from|in(?!\s+(?:their|my|a|an|his|her)\b))\s+(?:the\s+)?([A-Za-z]+(?:\s+[A-Za-z]+){0,2})/i,
+    )?.[1];
+    let country = countryRaw
+      ?.replace(
+        /\s+(?:who|with|aged?|over|under|above|below|and|or|between)$/i,
+        '',
+      )
+      ?.trim();
+
+    // no "from/in" found — scan every word for a demonym
+    if (!country) {
+      for (const word of s.split(/\s+/)) {
+        if (this.demonymMap.has(word.toLowerCase())) {
+          country = word;
+          break;
+        }
+      }
+    }
+
+    return { country, ageGroup, minAge, maxAge, gender, isYoung };
   }
   private externalApiError(name: string) {
     return new BadGatewayException(`${name} returned an invalid response`);
@@ -331,7 +669,7 @@ export class ProfileService {
   private async profile(
     profileWhereUniqueInput: Prisma.ProfileWhereUniqueInput,
   ): Promise<Profile | null> {
-    return this.prisma.profile.findUnique({
+    return this.prisma.client.profile.findUnique({
       where: profileWhereUniqueInput,
     });
   }
@@ -343,7 +681,7 @@ export class ProfileService {
     orderBy?: Prisma.ProfileOrderByWithRelationInput;
   }): Promise<Profile[]> {
     const { skip, take, cursor, where, orderBy } = params;
-    return await this.prisma.profile.findMany({
+    return await this.prisma.client.profile.findMany({
       skip,
       take,
       cursor,
@@ -354,14 +692,14 @@ export class ProfileService {
   private async createProfile(
     data: Prisma.ProfileCreateInput,
   ): Promise<Profile> {
-    return this.prisma.profile.create({
+    return this.prisma.client.profile.create({
       data,
     });
   }
   private async deleteProfile(
     profileWhereUniqueInput: Prisma.ProfileWhereUniqueInput,
   ): Promise<Profile> {
-    return this.prisma.profile.delete({
+    return this.prisma.client.profile.delete({
       where: profileWhereUniqueInput,
     });
   }

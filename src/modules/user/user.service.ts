@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma, User } from '~gen/prisma/client';
-import { PrismaService } from 'src/shared/prisma.service';
+import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
 export class UserService {
@@ -15,7 +15,7 @@ export class UserService {
     email: string;
     avatar_url?: string;
   }): Promise<User> {
-    return this.prisma.user.upsert({
+    return this.prisma.client.user.upsert({
       where: { github_id: data.github_id },
       update: { last_login_at: new Date(), avatar_url: data.avatar_url },
       create: {
@@ -28,7 +28,7 @@ export class UserService {
   }
 
   async updateRefreshTokenHash(id: string, hash: string | null): Promise<void> {
-    await this.prisma.user.update({
+    await this.prisma.client.user.update({
       where: { id },
       data: { refresh_token_hash: hash },
     });
@@ -37,7 +37,7 @@ export class UserService {
   private async user(
     userWhereUniqueInput: Prisma.UserWhereUniqueInput,
   ): Promise<User | null> {
-    return this.prisma.user.findUnique({
+    return this.prisma.client.user.findUnique({
       where: userWhereUniqueInput,
     });
   }
@@ -49,7 +49,7 @@ export class UserService {
     orderBy?: Prisma.UserOrderByWithRelationInput;
   }): Promise<User[]> {
     const { skip, take, cursor, where, orderBy } = params;
-    return await this.prisma.user.findMany({
+    return await this.prisma.client.user.findMany({
       skip,
       take,
       cursor,
@@ -58,14 +58,14 @@ export class UserService {
     });
   }
   private async createProfile(data: Prisma.UserCreateInput): Promise<User> {
-    return this.prisma.user.create({
+    return this.prisma.client.user.create({
       data,
     });
   }
   private async deleteProfile(
     userWhereUniqueInput: Prisma.UserWhereUniqueInput,
   ): Promise<User> {
-    return this.prisma.user.delete({
+    return this.prisma.client.user.delete({
       where: userWhereUniqueInput,
     });
   }

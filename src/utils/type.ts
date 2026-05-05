@@ -27,6 +27,16 @@ export interface RestCountriesData {
   cca2: string;
 }
 
+export interface DemonymCountryData {
+  cca2: string;
+  demonyms?: {
+    eng?: {
+      f?: string;
+      m?: string;
+    };
+  };
+}
+
 export interface ClassifyResponse {
   name: string;
   gender: Gender;

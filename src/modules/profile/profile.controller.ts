@@ -10,6 +10,7 @@ import {
   Req,
   Res,
   UseGuards,
+  HttpCode,
 } from '@nestjs/common';
 import { AdminGuard } from '../auth/guard/admin.guard';
 import { ApiVersionGuard } from './guards/api-version.guard';
@@ -25,7 +26,7 @@ import {
   ApiExtraModels,
   getSchemaPath,
 } from '@nestjs/swagger';
-import { ProfileService } from './profile.service';
+import { ProfileService, CsvUploadSummary } from './profile.service';
 import { CreateProfileDto } from './dto/create-profile.dto';
 import { GetProfileDto } from './dto/get-profile.dto';
 import { ProfileEntity } from './entities/profile.entity';
@@ -89,6 +90,43 @@ export class ProfileController {
   @UseGuards(AdminGuard)
   create(@Body() createProfileDto: CreateProfileDto) {
     return this.profileService.create(createProfileDto);
+  }
+
+  @Post('upload')
+  @HttpCode(200)
+  @UseGuards(AdminGuard)
+  @ApiOperation({
+    summary: 'Bulk upload profiles via CSV (Admin only)',
+    description:
+      'Streams and processes a CSV file (up to 500,000 rows). Expected columns: name,gender,gender_probability,age,country_id,country_name,country_probability. Bad rows are skipped; a summary is returned.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Upload complete — summary of inserted and skipped rows.',
+    schema: {
+      properties: {
+        status: { type: 'string', example: 'success' },
+        total_rows: { type: 'number', example: 50000 },
+        inserted: { type: 'number', example: 48231 },
+        skipped: { type: 'number', example: 1769 },
+        reasons: {
+          type: 'object',
+          example: {
+            duplicate_name: 1203,
+            invalid_age: 312,
+            missing_fields: 254,
+          },
+        },
+      },
+    },
+  })
+  uploadCsv(@Req() req: any): Promise<CsvUploadSummary> {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
+    if (!req.headers['content-type']?.includes('multipart/form-data')) {
+      throw new BadRequestException('Expected multipart/form-data');
+    }
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+    return this.profileService.uploadCsv(req);
   }
 
   @Get()

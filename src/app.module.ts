@@ -10,6 +10,10 @@ import { JwtAuthGuard } from './modules/auth/guard/jwt.guard';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { UserThrottlerGuard } from './utils/user-throttler.guard';
 import { LoggerModule } from 'nestjs-pino';
+import { PrismaModule } from './prisma/prisma.module';
+import { CacheModule } from '@nestjs/cache-manager';
+import Keyv from 'keyv';
+import KeyvRedis from '@keyv/redis';
 
 @Module({
   imports: [
@@ -46,9 +50,24 @@ import { LoggerModule } from 'nestjs-pino';
         },
       },
     }),
+    CacheModule.registerAsync({
+      isGlobal: true,
+      useFactory: () => {
+        const redis = new KeyvRedis(
+          `rediss://:${process.env.REDIS_PASSWORD}@${process.env.REDIS_HOST}:${process.env.REDIS_PORT}`,
+        );
+
+        const keyv = new Keyv({ store: redis });
+
+        return {
+          store: keyv,
+        };
+      },
+    }),
     ProfileModule,
     AuthModule,
     UserModule,
+    PrismaModule,
   ],
   controllers: [AppController],
   providers: [

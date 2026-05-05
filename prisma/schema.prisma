@@ -27,8 +27,10 @@ model Profile {
   country_name        String
   country_probability Float
   created_at          DateTime  @default(now())
-  @@index([id])
-  @@index([name])
+  @@index([gender, age_group, country_id])
+  @@index([age])
+  @@index([created_at])
+  @@index([gender_probability])
 }
 enum Gender {
   male
