@@ -52,8 +52,10 @@ import KeyvRedis from '@keyv/redis';
     }),
     CacheModule.registerAsync({
       isGlobal: true,
-      useFactory: async () => {
-        const redis = new KeyvRedis(`rediss://:${process.env.REDIS_PASSWORD}@${process.env.REDIS_HOST}:${process.env.REDIS_PORT}`);
+      useFactory: () => {
+        const redis = new KeyvRedis(
+          `rediss://:${process.env.REDIS_PASSWORD}@${process.env.REDIS_HOST}:${process.env.REDIS_PORT}`,
+        );
 
         const keyv = new Keyv({ store: redis });
 

@@ -111,16 +111,22 @@ export class ProfileController {
         skipped: { type: 'number', example: 1769 },
         reasons: {
           type: 'object',
-          example: { duplicate_name: 1203, invalid_age: 312, missing_fields: 254 },
+          example: {
+            duplicate_name: 1203,
+            invalid_age: 312,
+            missing_fields: 254,
+          },
         },
       },
     },
   })
-  uploadCsv(@Req() req: Request): Promise<CsvUploadSummary> {
+  uploadCsv(@Req() req: any): Promise<CsvUploadSummary> {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     if (!req.headers['content-type']?.includes('multipart/form-data')) {
       throw new BadRequestException('Expected multipart/form-data');
     }
-    return this.profileService.uploadCsv(req as any);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+    return this.profileService.uploadCsv(req);
   }
 
   @Get()
