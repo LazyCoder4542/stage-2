@@ -10,6 +10,7 @@ import { JwtAuthGuard } from './modules/auth/guard/jwt.guard';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { UserThrottlerGuard } from './utils/user-throttler.guard';
 import { LoggerModule } from 'nestjs-pino';
+import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { LoggerModule } from 'nestjs-pino';
     ProfileModule,
     AuthModule,
     UserModule,
+    PrismaModule,
   ],
   controllers: [AppController],
   providers: [

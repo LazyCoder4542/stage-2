@@ -16,7 +16,6 @@ import {
   RestCountriesData,
 } from 'src/utils/type';
 import { AgeGroup, Gender, Prisma, Profile } from '~gen/prisma/client';
-import { PrismaService } from 'src/shared/prisma.service';
 import {
   PaginationResponse,
   DataWithMessage,
@@ -27,6 +26,7 @@ import {
   ProfileSortBy,
 } from './dto/get-profile.dto';
 import { SearchProfileDto } from './dto/search-profile.dto';
+import { PrismaService } from 'src/prisma/prisma.service';
 
 // REGEX
 // find country name: (?<=from )\w+
@@ -98,7 +98,7 @@ export class ProfileService {
       },
     };
     const [data, total] = await Promise.all([
-      this.prisma.profile.findMany({
+      this.prisma.client.profile.findMany({
         where,
         orderBy: {
           ...(getProfileDto.sort_by == ProfileSortBy.age && { age: order }),
@@ -112,7 +112,7 @@ export class ProfileService {
         skip: (page - 1) * limit,
         take: limit,
       }),
-      this.prisma.profile.count({ where }),
+      this.prisma.client.profile.count({ where }),
     ]);
     const total_pages = Math.ceil(total / limit);
     const url = new URL(baseUrl, process.env.API_BASE_URL);
@@ -143,7 +143,7 @@ export class ProfileService {
       gender_probability: { gte: getProfileDto.min_gender_probability },
       country_probability: { gte: getProfileDto.min_country_probability },
     };
-    return this.prisma.profile.findMany({
+    return this.prisma.client.profile.findMany({
       where,
       orderBy: {
         ...(getProfileDto.sort_by == ProfileSortBy.age && { age: order }),
@@ -331,7 +331,7 @@ export class ProfileService {
   private async profile(
     profileWhereUniqueInput: Prisma.ProfileWhereUniqueInput,
   ): Promise<Profile | null> {
-    return this.prisma.profile.findUnique({
+    return this.prisma.client.profile.findUnique({
       where: profileWhereUniqueInput,
     });
   }
@@ -343,7 +343,7 @@ export class ProfileService {
     orderBy?: Prisma.ProfileOrderByWithRelationInput;
   }): Promise<Profile[]> {
     const { skip, take, cursor, where, orderBy } = params;
-    return await this.prisma.profile.findMany({
+    return await this.prisma.client.profile.findMany({
       skip,
       take,
       cursor,
@@ -354,14 +354,14 @@ export class ProfileService {
   private async createProfile(
     data: Prisma.ProfileCreateInput,
   ): Promise<Profile> {
-    return this.prisma.profile.create({
+    return this.prisma.client.profile.create({
       data,
     });
   }
   private async deleteProfile(
     profileWhereUniqueInput: Prisma.ProfileWhereUniqueInput,
   ): Promise<Profile> {
-    return this.prisma.profile.delete({
+    return this.prisma.client.profile.delete({
       where: profileWhereUniqueInput,
     });
   }
