@@ -31,6 +31,16 @@ import {
 import { SearchProfileDto } from './dto/search-profile.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
+import { parse as csvParse } from 'csv-parse';
+import Busboy from 'busboy';
+import type { IncomingMessage } from 'http';
+
+export interface CsvUploadSummary {
+  total_rows: number;
+  inserted: number;
+  skipped: number;
+  reasons: Record<string, number>;
+}
 
 // REGEX
 // find country name: (?<=from )\w+
@@ -224,6 +234,137 @@ export class ProfileService {
     });
     await this.cache.clear();
   }
+
+  async uploadCsv(req: IncomingMessage): Promise<CsvUploadSummary> {
+    const CHUNK_SIZE = 1000;
+    const EXPECTED_COLS = 7;
+
+    return new Promise((resolve, reject) => {
+      const bb = Busboy({ headers: req.headers as Record<string, string> });
+
+      const summary: CsvUploadSummary = {
+        total_rows: 0,
+        inserted: 0,
+        skipped: 0,
+        reasons: {},
+      };
+
+      const bump = (reason: string) => {
+        summary.skipped++;
+        summary.reasons[reason] = (summary.reasons[reason] ?? 0) + 1;
+      };
+
+      let fileFound = false;
+
+      bb.on('file', (_field, stream) => {
+        fileFound = true;
+
+        const parser = csvParse({
+          delimiter: ',',
+          trim: true,
+          skip_empty_lines: true,
+          relax_column_count: true,
+          relax_quotes: true,
+          from_line: 2,
+        });
+
+        let chunk: Prisma.ProfileCreateManyInput[] = [];
+        let chain = Promise.resolve();
+
+        const flushChunk = (rows: Prisma.ProfileCreateManyInput[]) => {
+          if (!rows.length) return;
+          parser.pause();
+          chain = chain.then(async () => {
+            try {
+              const { count } = await this.prisma.client.profile.createMany({
+                data: rows,
+                skipDuplicates: true,
+              });
+              summary.inserted += count;
+              const dupes = rows.length - count;
+              summary.skipped += dupes;
+              summary.reasons['duplicate_name'] =
+                (summary.reasons['duplicate_name'] ?? 0) + dupes;
+            } catch {
+              summary.skipped += rows.length;
+              summary.reasons['db_error'] =
+                (summary.reasons['db_error'] ?? 0) + rows.length;
+            }
+            await new Promise((r) => setImmediate(r));
+            parser.resume();
+          });
+        };
+
+        parser.on('data', (row: string[]) => {
+          summary.total_rows++;
+
+          if (row.length !== EXPECTED_COLS) {
+            bump('malformed_row');
+            return;
+          }
+
+          const [rawName, rawGender, gpStr, ageStr, countryId, countryName, cpStr] = row;
+
+          if (!rawName || !rawGender || !gpStr || !ageStr || !countryId || !countryName || !cpStr) {
+            bump('missing_fields');
+            return;
+          }
+
+          const gender = rawGender.toLowerCase();
+          if (gender !== 'male' && gender !== 'female') {
+            bump('invalid_gender');
+            return;
+          }
+
+          const age = Number(ageStr);
+          if (!Number.isInteger(age) || age <= 0) {
+            bump('invalid_age');
+            return;
+          }
+
+          const gender_probability = parseFloat(gpStr);
+          const country_probability = parseFloat(cpStr);
+          if (
+            isNaN(gender_probability) || gender_probability < 0 || gender_probability > 1 ||
+            isNaN(country_probability) || country_probability < 0 || country_probability > 1
+          ) {
+            bump('missing_fields');
+            return;
+          }
+
+          chunk.push({
+            name: rawName.replace(/\b\w/g, (c) => c.toUpperCase()),
+            gender: gender as Gender,
+            gender_probability,
+            age,
+            age_group: this.getAgeGroup(age),
+            country_id: countryId.toUpperCase(),
+            country_name: countryName,
+            country_probability: Math.round(country_probability * 100) / 100,
+          });
+
+          if (chunk.length >= CHUNK_SIZE) flushChunk(chunk.splice(0));
+        });
+
+        parser.on('end', () => {
+          flushChunk(chunk.splice(0));
+          chain.then(() => resolve(summary)).catch(reject);
+        });
+
+        parser.on('error', () => bump('malformed_row'));
+
+        stream.pipe(parser);
+      });
+
+      bb.on('finish', () => {
+        if (!fileFound) reject(new BadRequestException('No file uploaded'));
+      });
+
+      bb.on('error', reject);
+      req.pipe(bb);
+    });
+  }
+
   private getAgeGroup(age: number) {
     if (age <= 12) {
       return AgeGroup.child;
