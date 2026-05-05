@@ -11,6 +11,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { UserThrottlerGuard } from './utils/user-throttler.guard';
 import { LoggerModule } from 'nestjs-pino';
 import { PrismaModule } from './prisma/prisma.module';
+import { RedisModule } from './redis/redis.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { PrismaModule } from './prisma/prisma.module';
     AuthModule,
     UserModule,
     PrismaModule,
+    RedisModule,
   ],
   controllers: [AppController],
   providers: [
