@@ -63,6 +63,7 @@ export class ProfileService {
     const { age } = enrichData[1];
     const { country_id, probability: country_probability } =
       enrichData[2].country[0];
+    const rounded_country_probability = Math.round(country_probability * 100) / 100;
     const country_name = await this.getCountryName(country_id);
     return this.createProfile({
       name,
@@ -72,7 +73,7 @@ export class ProfileService {
       age_group: this.getAgeGroup(age),
       country_id,
       country_name,
-      country_probability,
+      country_probability: rounded_country_probability,
     });
   }
 
